@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isOwner() { return signedIn() && profile().role == 'owner'; }
+    function isAdmin() { return signedIn() && profile().role in ['owner', 'admin']; }
+    function isStaff() { return signedIn() && profile().role in ['owner', 'admin', 'teacher', 'accountant']; }
+    function isAcademic() { return signedIn() && profile().role in ['owner', 'admin', 'teacher']; }
+    function isFinance() { return signedIn() && profile().role in ['owner', 'admin', 'accountant']; }
+    function isOwnStudent(id) { return signedIn() && profile().role == 'student' && profile().studentId == id; }
+    // True only on a brand-new copy that has not been set up yet
+    function setupOpen() { return !exists(/databases/$(database)/documents/settings/school); }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid && setupOpen() && request.resource.data.role == 'owner';
+      allow write: if isAdmin();
+    }
+    // School name, logo and login pictures must be visible before sign-in. Only the owner can change them.
+    match /settings/{doc} {
+      allow read: if true;
+      allow create: if (signedIn() && setupOpen() && request.resource.data.setupDone == true) || isOwner();
+      allow update, delete: if isOwner();
+    }
+    match /backgrounds/{doc} { allow read: if true; allow write: if isOwner(); }
+
+    match /students/{id} { allow read: if isStaff() || isOwnStudent(id); allow write: if isAdmin(); }
+    match /tokens/{id} { allow read: if isAdmin() || isOwnStudent(id); allow write: if isAdmin(); }
+    match /meta/{doc} { allow read, write: if isAdmin(); }
+
+    match /classes/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /subjects/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /terms/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /grades/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /guardians/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /staff/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /timetable/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+
+    match /exams/{doc} { allow read: if isStaff(); allow write: if isAcademic(); }
+    match /marks/{doc} { allow read: if isStaff(); allow write: if isAcademic(); }
+    match /attendance/{doc} { allow read: if isStaff(); allow write: if isAcademic(); }
+
+    match /fees/{doc} { allow read: if isFinance() || isOwnStudent(resource.data.studentId); allow write: if isFinance(); }
+    match /payments/{doc} { allow read: if isFinance() || isOwnStudent(resource.data.studentId); allow write: if isFinance(); }
+    match /expenses/{doc} { allow read, write: if isFinance(); }
+  }
+}
